@@ -40,10 +40,10 @@ except:
 from caffe_uresnet import UResNet
 
 GPUMODE=True
-RESUME_FROM_CHECKPOINT=False
+RESUME_FROM_CHECKPOINT=True
 RUNPROFILER=False
-PRETRAIN_START_FILE="/cluster/kappa/90-days-archive/wongjiradlab/twongj01/pytorch-uresnet/checkpoint_p2_caffe/checkpoint.30000th.tar"
-RESUME_CHECKPOINT_FILE=""
+#PRETRAIN_START_FILE="/cluster/kappa/90-days-archive/wongjiradlab/twongj01/pytorch-uresnet/checkpoint_p2_caffe/checkpoint.30000th.tar"
+RESUME_CHECKPOINT_FILE="/cluster/kappa/90-days-archive/wongjiradlab/twongj01/pytorch-uresnet/plane0_caffe_finetune/checkpoints_run3/checkpoint.37500th.tar"
 GPUID=0
 
 # SegData: class to hold batch data
@@ -109,7 +109,7 @@ class LArCV1Dataset:
 
         # adjust adc values, threshold, cap
         data.np_images *= 0.83 # scaled to be closer to EXTBNB
-        threshold = np.random.rand()*6.0 + 4.0 # threshold 4-10
+        threshold = np.random.rand()*7.0 + 0.0 # threshold 0-5
         for ibatch in range(self.dim[0]):
             lx = data.np_labels[ibatch,:]
             lw = data.np_weights[ibatch,:]
@@ -218,17 +218,17 @@ def main():
         criterion = PixelWiseNLLLoss()
 
     # training parameters
-    lr = 1.0e-4
+    lr = 1.0e-5
     momentum = 0.9
     weight_decay = 1.0e-3
 
     # training length
-    batchsize_train = 10
+    batchsize_train = 12
     batchsize_valid = 8
     start_epoch = 0
     epochs      = 1
-    start_iter  = 0
-    num_iters   = 10000
+    start_iter  = 37501
+    num_iters   = 60000
     #num_iters    = None # if None
     iter_per_epoch = None # determined later
     iter_per_valid = 10
@@ -245,9 +245,6 @@ def main():
     optimizer = torch.optim.SGD(model.parameters(), lr,
                                 momentum=momentum,
                                 weight_decay=weight_decay)
-    #if RESUME_FROM_CHECKPOINT:
-    #    optimizer.load_state_dict(checkpoint['optimizer'])
-    
 
     cudnn.benchmark = True
 
@@ -259,7 +256,7 @@ def main():
   Verbosity:    2
   EnableFilter: false
   RandomAccess: true
-  UseThread:    false
+  UseThread:    true
   #InputFiles:   ["/media/hdd1/larbys/ssnet_cosmic_retraining/cocktail/ssnet_retrain_cocktail_p00.root","/media/hdd1/larbys/ssnet_cosmic_retraining/cocktail/ssnet_retrain_cocktail_p01.root","/media/hdd1/larbys/ssnet_cosmic_retraining/cocktail/ssnet_retrain_cocktail_p02.root"]
   #InputFiles:   ["/cluster/kappa/90-days-archive/wongjiradlab/twongj01/ssnet_training_data/ssnet_retrain_cocktail_p00.root","/cluster/kappa/90-days-archive/wongjiradlab/twongj01/ssnet_training_data/ssnet_retrain_cocktail_p01.root","/cluster/kappa/90-days-archive/wongjiradlab/twongj01/ssnet_training_data/ssnet_retrain_cocktail_p02.root"] 
   InputFiles:   ["/tmp/ssnet_retrain_cocktail_p00.root","/tmp/ssnet_retrain_cocktail_p01.root","/tmp/ssnet_retrain_cocktail_p02.root"] 

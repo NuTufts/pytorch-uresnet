@@ -5,7 +5,7 @@ WORKDIR=$1
 DATADIR=$2
 cd $WORKDIR
 source setup_container.sh
-rsync $DATADIR/*.root /tmp/
+#rsync $DATADIR/*.root /tmp/
 
 jobdir=`printf slurm_finetune_%d ${SLURMJOBID}`
 mkdir $jobdir

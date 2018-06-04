@@ -3,7 +3,7 @@
 #SBATCH --job-name=uresnet_finetuning
 #SBATCH --output=uresnet_finetuning.log
 #SBATCH --ntasks=1
-#SBATCH --time=1-00:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --mem-per-cpu=8000
 #SBATCH --cpus-per-task=2
 #SBATCH --partition gpu
