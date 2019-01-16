@@ -15,9 +15,18 @@ PyTorch Implementation of U-ResNet used for track/shower pixel-labeling
 
   * ubuntu 16.10, ROOT 6, python 2.7.12, tensorflow-tensorboard (from tensorflow 1.4.1), cuda 8.0
 
-## Files
+## Folders
 
-* `uresnet.py`: module that defines the network
-* `plotlarcv1.ipynb`: notebook used to test file IO commands. For LArCV classic files.
-* `test.py.ipynb`: notebook used to test file IO commands. For LArCV2 files.
-* `train_wlarcv1.py`: script for training. 
+* `models`: contains models
+* `notebooks`: jupyter notebooks to view data
+* `train_scripts`: scripts for training
+* `tufts_scripts`: scripts for running on the Tufts research cluster
+* `prod_scripts`: scripts for setting up production
+* `meitner_scripts`: scripts for running on meitner machine
+* `arxiv`: cruft
+
+## Models
+
+### Caffe UResNet
+
+A reimplementation of UResNet used for MCC8. Results on data published at X.
