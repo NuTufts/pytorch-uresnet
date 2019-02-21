@@ -1,3 +1,6 @@
 [submodule "larcv"]
 	path = larcv
 	url = https://github.com/larbys/larcv
+[submodule "larcvdataset"]
+	path = larcvdataset
+	url = https://github.com/larbys/larcvdataset
