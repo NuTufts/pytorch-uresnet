@@ -35,109 +35,16 @@ print "model dir: ",os.environ["PWD"]+"/../models"
 sys.path.append( os.environ["PWD"]+"/../models" )
 from spuresnet import SparseUResNet
 
+# dataset
+sys.path.append( os.environ["PWD"]+"/../dataloader" )
+from sparseimgdata import SparseImagePyTorchDataset
 
 GPUMODE=True
 GPUID=0
 RESUME_FROM_CHECKPOINT=False
 RUNPROFILER=False
 CHECKPOINT_FILE="plane2_caffe/run1/checkpoint.20000th.tar"
-
-# SegData: class to hold batch data
-# we expect LArCV1Dataset to fill this object
-class SegData:
-    def __init__(self):
-        self.dim = None
-        self.images = None # adc image
-        self.labels = None # labels
-        self.weights = None # weights
-        return
-
-    def shape(self):
-        if self.dim is None:
-            raise ValueError("SegData instance hasn't been filled yet")
-        return self.dim
-    
-# Data augmentation/manipulation functions
-def padandcrop(npimg2d,nplabelid,npweightid):
-    imgpad  = np.zeros( (264,264), dtype=np.float32 )
-    imgpad[4:256+4,4:256+4] = npimg2d[:,:]
-    randx = np.random.randint(0,8)
-    randy = np.random.randint(0,8)
-    return imgpad[randx:randx+256,randy:randy+256]
-
-def padandcropandflip(npimg2d):
-    imgpad  = np.zeros( (264,264), dtype=np.float32 )
-    imgpad[4:256+4,4:256+4] = npimg2d[:,:]
-    if np.random.rand()>0.5:
-        imgpad = np.flip( imgpad, 0 )
-    if np.random.rand()>0.5:
-        imgpad = np.flip( imgpad, 1 )
-    randx = np.random.randint(0,8)
-    randy = np.random.randint(0,8)
-    return imgpad[randx:randx+256,randy:randy+256]    
-
-# Data interface
-class LArCV1Dataset:
-    def __init__(self, name, cfgfile ):
-        # inputs
-        # cfgfile: path to configuration. see test.py.ipynb for example of configuration
-        self.name = name
-        self.cfgfile = cfgfile
-        return
-      
-    def init(self):
-        # create instance of data file interface
-        self.io = larcv.ThreadDatumFiller(self.name)
-        self.io.configure(self.cfgfile)
-        self.nentries = self.io.get_n_entries()
-        self.io.set_next_index(0)
-        print "[LArCV1Data] able to create ThreadDatumFiller"
-        return
-        
-    def getbatch(self, batchsize):
-        self.io.batch_process(batchsize)
-        time.sleep(0.1)
-        itry = 0
-        while self.io.thread_running() and itry<100:
-            time.sleep(0.01)
-            itry += 1
-        if itry>=100:
-            raise RuntimeError("Batch Loader timed out")
-        
-        # fill SegData object
-        data = SegData()
-        dimv = self.io.dim() # c++ std vector through ROOT bindings
-        self.dim     = (dimv[0], dimv[1], dimv[2], dimv[3] )
-        self.dim3    = (dimv[0], dimv[2], dimv[3] )
-
-        # numpy arrays
-        data.np_images  = np.zeros( self.dim,  dtype=np.float32 )
-        data.np_labels  = np.zeros( self.dim3, dtype=np.int )
-        data.np_weights = np.zeros( self.dim3, dtype=np.float32 )
-        data.np_images[:]  = larcv.as_ndarray(self.io.data()).reshape(    self.dim  )[:]
-        data.np_labels[:]  = larcv.as_ndarray(self.io.labels()).reshape(  self.dim3 )[:]
-        data.np_weights[:] = larcv.as_ndarray(self.io.weights()).reshape( self.dim3 )[:]
-        data.np_labels[:] += -1
-        
-        # pytorch tensors
-        data.images = torch.from_numpy(data.np_images)
-        data.labels = torch.from_numpy(data.np_labels)
-        data.weight = torch.from_numpy(data.np_weights)
-        #if GPUMODE:
-        #    data.images.cuda()
-        #    data.labels.cuda(async=False)
-        #    data.weight.cuda(async=False)
-
-
-        # debug values
-        #print "max label: ",np.max(data.labels)
-        #print "min label: ",np.min(data.labels)
-        
-        return data
-
-
-# Loss Function
-# We define a pixel wise L2 loss
+INPUTFILE="~/trainingdata/mcc8ssnet/train00.root"
 
 # taken from torch.nn.modules.loss
 def _assert_no_grad(variable):
@@ -166,11 +73,10 @@ class PixelWiseNLLLoss(nn.modules.loss._WeightedLoss):
         return torch.mean(pixelloss)
         
 
-torch.cuda.device( 1 )
-
 # global variables
 best_prec1 = 0.0  # best accuracy, use to decide when to save network weights
 writer = SummaryWriter()
+device = torch.device("cuda")
 
 def main():
 
@@ -180,18 +86,20 @@ def main():
     # create model
     model = SparseUResNet( (512,512), 2, 16, 5, 3 )
     if GPUMODE:
-        model = model.cuda(GPUID)
+        model = model.to(device=device)
 
     # uncomment to dump model
     print "Loaded model: ",model
     # check where model pars are
     #for p in model.parameters():
     #    print p.is_cuda
-    sys.exit(-1)
+    
+
+    print next(model.parameters()).is_cuda
 
     # define loss function (criterion) and optimizer
     if GPUMODE:
-        criterion = PixelWiseNLLLoss().cuda(GPUID)
+        criterion = PixelWiseNLLLoss().to(device=device)
     else:
         criterion = PixelWiseNLLLoss()
 
@@ -205,8 +113,8 @@ def main():
     batchsize_valid = 2
     start_epoch = 0
     epochs      = 1
-    start_iter  = 20000
-    num_iters   = 30000
+    start_iter  = 0
+    num_iters   = 10000
     #num_iters    = None # if None
     iter_per_epoch = None # determined later
     iter_per_valid = 10
@@ -227,90 +135,11 @@ def main():
     cudnn.benchmark = True
 
     # LOAD THE DATASET
+    iotrain = SparseImagePyTorchDataset(INPUTFILE, batchsize_train, tickbackward=True)
+    iovalid = SparseImagePyTorchDataset(INPUTFILE, batchsize_valid, tickbackward=True)
 
-    # define configurations
-    traincfg = """ThreadDatumFillerTrain: {
-
-  Verbosity:    2
-  EnableFilter: false
-  RandomAccess: true
-  UseThread:    false
-  InputFiles:   ["/home/twongjirad/trainingdata/mcc8ssnet/train00.root"]
-  ProcessType:  ["SegFiller"]
-  ProcessName:  ["SegFiller"]
-
-  IOManager: {
-    Verbosity: 2
-    IOMode: 0
-    ReadOnlyTypes: [0,0,0]
-    ReadOnlyNames: ["wire","segment","ts_keyspweight"]
-  }
+    NENTRIES = len(iotrain)
     
-  ProcessList: {
-    SegFiller: {
-      # DatumFillerBase configuration
-      Verbosity: 2
-      ImageProducer:     "wire"
-      LabelProducer:     "segment"
-      WeightProducer:    "ts_keyspweight"
-      # SegFiller configuration
-      Channels: [2]
-      SegChannel: 2
-      EnableMirror: false
-      EnableCrop: false
-      ClassTypeList: [0,1,2]
-      ClassTypeDef: [0,0,0,2,2,2,1,1,1,1]
-    }
-  }
-}
-"""
-    validcfg = """ThreadDatumFillerValid: {
-
-  Verbosity:    2
-  EnableFilter: false
-  RandomAccess: true
-  UseThread:    false
-  InputFiles:   ["/home/twongjirad/trainingdata/mcc8ssnet/train00.root"]
-  ProcessType:  ["SegFiller"]
-  ProcessName:  ["SegFiller"]
-
-  IOManager: {
-    Verbosity: 2
-    IOMode: 0
-    ReadOnlyTypes: [0,0,0]
-    ReadOnlyNames: ["wire","segment","ts_keyspweight"]
-  }
-    
-  ProcessList: {
-    SegFiller: {
-      # DatumFillerBase configuration
-      Verbosity: 2
-      ImageProducer:     "wire"
-      LabelProducer:     "segment"
-      WeightProducer:    "ts_keyspweight"
-      # SegFiller configuration
-      Channels: [2]
-      SegChannel: 2
-      EnableMirror: false
-      EnableCrop: false
-      ClassTypeList: [0,1,2]
-      ClassTypeDef: [0,0,0,2,2,2,1,1,1,1]
-    }
-  }
-}
-"""
-    with open("segfiller_train.cfg",'w') as ftrain:
-        print >> ftrain,traincfg
-    with open("segfiller_valid.cfg",'w') as fvalid:
-        print >> fvalid,validcfg
-    
-    iotrain = LArCV1Dataset("ThreadDatumFillerTrain","segfiller_train.cfg" )
-    iovalid = LArCV1Dataset("ThreadDatumFillerValid","segfiller_valid.cfg" )
-    iotrain.init()
-    iovalid.init()
-    iotrain.getbatch(batchsize_train)
-
-    NENTRIES = iotrain.io.get_n_entries()
     print "Number of entries in training set: ",NENTRIES
 
     if NENTRIES>0:
@@ -325,6 +154,7 @@ def main():
 
     print "Number of epochs: ",epochs
     print "Iter per epoch: ",iter_per_epoch
+
 
     with torch.autograd.profiler.profile(enabled=RUNPROFILER) as prof:
 
@@ -430,7 +260,6 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
 
     # switch to train mode
     model.train()
-    model.cuda(GPUID)
 
     for i in range(0,nbatches):
         #print "epoch ",epoch," batch ",i," of ",nbatches
@@ -438,28 +267,63 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
 
         # data loading time        
         end = time.time()        
-        data = train_loader.getbatch(batchsize)
+        data = train_loader[0]
         data_time.update(time.time() - end)
 
 
         # convert to pytorch Variable (with automatic gradient calc.)
-        end = time.time()        
-        if GPUMODE:
-            images_var = torch.autograd.Variable(data.images.cuda(GPUID))
-            labels_var = torch.autograd.Variable(data.labels.cuda(GPUID),requires_grad=False)
-            weight_var = torch.autograd.Variable(data.weight.cuda(GPUID),requires_grad=False)
-        else:
-            images_var = torch.autograd.Variable(data.images)
-            labels_var = torch.autograd.Variable(data.labels,requires_grad=False)
-            weight_var = torch.autograd.Variable(data.weight,requires_grad=False)
-        format_time.update( time.time()-end )
+        end = time.time()
+        
+        # input: need two tensors (1) coordinate which is Nx3 (2) features N
+        batchsize = len(data["pixlist"])
+        totinputs = 0
+        for input_batch in data["pixlist"]:
+            totinputs += input_batch.shape[0]
+        input_coord_t = torch.LongTensor(totinputs,3)
+        input_feats_t = torch.FloatTensor(totinputs,1)
+        ninputs = 0
+        for batchid,input_batch in enumerate(data["pixlist"]):
+            input_coord_t[ninputs:ninputs+input_batch.shape[0],0:2] = torch.Tensor(input_batch[:,0:2].astype(np.int64))
+            input_coord_t[ninputs:ninputs+input_batch.shape[0],2]   = batchid
+            input_feats_t[ninputs:ninputs+input_batch.shape[0],0]   = torch.Tensor(input_batch[:,2])
+            ninputs += input_batch.shape[0]
 
+        # truths
+        labels_t = torch.LongTensor( batchsize,1,data["label"][0].shape[0],data["label"][0].shape[1] )
+        for ibatch in xrange(batchsize):
+            labels_t[ibatch,0,:] = torch.Tensor(data["label"][ibatch].astype(np.int64))
+
+        # weights
+        weights_t = torch.FloatTensor( batchsize,1,data["label"][0].shape[0],data["label"][0].shape[1] )
+        for ibatch in xrange(batchsize):
+            weights_t[ibatch,0,:] = torch.Tensor(data["weight"][ibatch])
+
+        # batchsize
+        batchsize_t = torch.LongTensor([batchsize])
+        dtformat = time.time()-end
+        format_time.update( dtformat )
+        print "format/xfer data: ",dtformat
+        print input_coord_t[0:10,:]
+        print input_feats_t[0:10]
+
+        input_coord_t = input_coord_t.to(device=device)
+        input_feats_t = input_feats_t.to(device=device)
+        labels_t      = labels_t.to(device=device)
+        weights_t     = weights_t.to(device=device)
+        batchsize_t   = batchsize_t.to(device=device)
+        print input_coord_t.is_cuda,input_feats_t.is_cuda,labels_t.is_cuda,weights_t.is_cuda
+
+        input_list = [input_coord_t,input_feats_t,batchsize_t]
         
         # compute output
         if RUNPROFILER:
             torch.cuda.synchronize()
         end = time.time()
-        output = model(images_var)
+        print "input: ",input_coord_t.shape
+        output = model(input_list)
+        print "output: ",output.shape
+        sys.exit(-1)
+        
         loss = criterion(output, labels_var, weight_var)
         if RUNPROFILER:
             torch.cuda.synchronize()                

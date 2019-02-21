@@ -29,7 +29,7 @@ class SparseUResNet(nn.Module):
             raise ValueError("expected inputshape to contain size of 2 dimensions only. given %d values"%(len(self.inputshape)))
         
         # mode variable: how to deal with repeated data
-        self.mode = 3
+        self.mode = 0
 
         # nfeatures
         self.nfeatures = nfeatures
@@ -53,10 +53,14 @@ class SparseUResNet(nn.Module):
             scn.SubmanifoldConvolution(self.dimensions, 1, self.nfeatures, 3, False)).add(
             scn.UNet(self.dimensions, self.reps, self.nPlanes, residual_blocks=True, downsample=[2,2])).add(
             scn.BatchNormReLU(self.nfeatures)).add(
+            scn.SubmanifoldConvolution(self.dimensions,self.nfeatures,self.noutput_classes,1,False)).add(
+            #scn.SparseToDense(self.dimensions,self.noutput_classes))
             scn.OutputLayer(self.dimensions))
-        self.linear = nn.Linear(self.nfeatures, self.noutput_classes)
         
     def forward(self,x):
+        #print "model input: ",type(x[0]),x[0].shape,x[1].shape
         x=self.sparseModel(x)
-        x=self.linear(x)
+        #print "model output: ",type(x),x.shape
+        #x=self.sparse2dense(x)
+        #print "sparse out: ",type(x),x.shape        
         return x
