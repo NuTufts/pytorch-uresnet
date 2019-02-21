@@ -52,26 +52,30 @@ def _assert_no_grad(variable):
         "nn criterions don't compute the gradient w.r.t. targets - please " \
         "mark these variables as not requiring gradients"
         
-class PixelWiseNLLLoss(nn.modules.loss._WeightedLoss):
+class PixelWiseLoss(nn.modules.loss._WeightedLoss):
     def __init__(self,weight=None, size_average=True, ignore_index=-100 ):
-        super(PixelWiseNLLLoss,self).__init__(weight,size_average)
+        super(PixelWiseLoss,self).__init__(weight,size_average)
         self.ignore_index = ignore_index
         self.reduce = False
+        self.cross_entropy = torch.nn.CrossEntropyLoss( reduction='none' )
         #self.mean = torch.mean.cuda()
 
-    def forward(self,predict,target,pixelweights):
+    def forward(self,predict_t,target_t,pixelweights_t):
         """
         coords:  (N,3) coordinates of non-zero input. last dim is (row,col,batch)
         predict: (N,3) scores for each point
         target:  (N,3) tensor with correct class
         pixelweights: (N,3) tensor with weights for each pixel
         """
-        _assert_no_grad(target)
-        _assert_no_grad(pixelweights)
-        # reduce for below is false, so returns (b,h,w)
-        pixelloss = F.nll_loss(predict,target, self.weight, self.size_average, self.ignore_index, self.reduce)
-        pixelloss *= pixelweights
-        return torch.mean(pixelloss)
+        
+        pixelloss = self.cross_entropy( predict_t, target_t )
+        print "pixelloss shape=",pixelloss.shape
+        
+        pixelloss *= pixelweights_t
+        weightsum  = pixelweights_t.sum()
+        loss = pixelloss.sum()/weightsum
+        
+        return loss
         
 
 # global variables
@@ -100,9 +104,9 @@ def main():
 
     # define loss function (criterion) and optimizer
     if GPUMODE:
-        criterion = PixelWiseNLLLoss().to(device=device)
+        criterion = PixelWiseLoss().to(device=device)
     else:
-        criterion = PixelWiseNLLLoss()
+        criterion = PixelWiseLoss()
 
     # training parameters
     lr = 2.0e-5
@@ -282,15 +286,15 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
             totinputs += input_batch.shape[0]
         input_coord_t = torch.LongTensor(totinputs,3)
         input_feats_t = torch.FloatTensor(totinputs,1)
-        labels_t      = torch.LongTensor(totinputs,1)
-        weights_t     = torch.FloatTensor(totinputs,1)
+        labels_t      = torch.LongTensor(totinputs)
+        weights_t     = torch.FloatTensor(totinputs)
         ninputs = 0
         for batchid,(input_batch,label_np,weight_np) in enumerate(zip(data["pixlist"],data["label"],data["weight"])):
             input_coord_t[ninputs:ninputs+input_batch.shape[0],0:2] = torch.Tensor(input_batch[:,0:2].astype(np.int64))
             input_coord_t[ninputs:ninputs+input_batch.shape[0],2]   = batchid
             input_feats_t[ninputs:ninputs+input_batch.shape[0],0]   = torch.Tensor(input_batch[:,2])
-            labels_t[ninputs:ninputs+input_batch.shape[0],0]        = torch.Tensor(label_np[:,2])
-            weights_t[ninputs:ninputs+input_batch.shape[0],0]       = torch.Tensor(weight_np[:,2])
+            labels_t[ninputs:ninputs+input_batch.shape[0]]        = torch.Tensor(label_np[:,2])
+            weights_t[ninputs:ninputs+input_batch.shape[0]]       = torch.Tensor(weight_np[:,2])
             ndiff = np.not_equal(label_np[:,0:2],weight_np[:,0:2]).sum()
             if ndiff!=0:
                 raise ValueError("coordinates of label and weight pixels are different. ndiff=%d of %d"%(ndiff,label_np.shape[0]))
@@ -300,13 +304,13 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
         batchsize_t = torch.LongTensor([batchsize])
         dtformat = time.time()-end
         format_time.update( dtformat )
-        print "format/xfer data: ",dtformat
-        print "coords:", input_coord_t[0:10,:]
-        print "pixvals:",input_feats_t[0:10]
-        print "labels:",  labels_t[0:50]
-        print "origlabels: ",data["origlabel"][0][0:50,2]
-        print "weight:",  weights_t[0:10]
-
+        #print "format/xfer data: ",dtformat
+        #print "coords:", input_coord_t[0:10,:]
+        #print "pixvals:",input_feats_t[0:10]
+        #print "labels:",  labels_t[0:10]
+        #print "origlabels: ",data["origlabel"][0][0:10,2]
+        #print "weight:",  weights_t[0:10]
+        print "labels:",  labels_t.shape
 
         input_coord_t = input_coord_t.to(device=device)
         input_feats_t = input_feats_t.to(device=device)
@@ -322,14 +326,15 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
             torch.cuda.synchronize()
         end = time.time()
         print "input: ",input_coord_t.shape
-        output = model(input_coord_t,input_feats_t,batchsize_t)
-        print "output: ",output.shape
-        sys.exit(-1)
+        output_t = model(input_coord_t,input_feats_t,batchsize_t)
+        print "output: ",output_t.shape
         
-        loss = criterion(output, labels_var, weight_var)
+        loss = criterion(output_t, labels_t, weights_t)
+        print "loss: ",loss
         if RUNPROFILER:
             torch.cuda.synchronize()                
         forward_time.update(time.time()-end)
+        sys.exit(-1)
 
         # compute gradient and do SGD step
         if RUNPROFILER:
