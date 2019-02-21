@@ -56,11 +56,12 @@ class SparseUResNet(nn.Module):
             scn.SubmanifoldConvolution(self.dimensions,self.nfeatures,self.noutput_classes,1,False)).add(
             #scn.SparseToDense(self.dimensions,self.noutput_classes))
             scn.OutputLayer(self.dimensions))
+        self.softmax = torch.nn.Softmax(dim=1)
         
-    def forward(self,x):
+    def forward(self, coord_t, feature_t, batchsize ):
+        x = ( coord_t, feature_t, batchsize )
         #print "model input: ",type(x[0]),x[0].shape,x[1].shape
         x=self.sparseModel(x)
         #print "model output: ",type(x),x.shape
-        #x=self.sparse2dense(x)
-        #print "sparse out: ",type(x),x.shape        
+        x=self.softmax(x)
         return x

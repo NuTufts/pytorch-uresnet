@@ -157,6 +157,8 @@ class PixelWiseNLLLoss(nn.modules.loss._WeightedLoss):
         """
         _assert_no_grad(target)
         _assert_no_grad(pixelweights)
+        
+        
         # reduce for below is false, so returns (b,h,w)
         pixelloss = F.nll_loss(predict,target, self.weight, self.size_average, self.ignore_index, self.reduce)
         pixelloss *= pixelweights

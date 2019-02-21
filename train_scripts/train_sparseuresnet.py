@@ -61,9 +61,10 @@ class PixelWiseNLLLoss(nn.modules.loss._WeightedLoss):
 
     def forward(self,predict,target,pixelweights):
         """
-        predict: (b,c,h,w) tensor with output from logsoftmax
-        target:  (b,h,w) tensor with correct class
-        pixelweights: (b,h,w) tensor with weights for each pixel
+        coords:  (N,3) coordinates of non-zero input. last dim is (row,col,batch)
+        predict: (N,3) scores for each point
+        target:  (N,3) tensor with correct class
+        pixelweights: (N,3) tensor with weights for each pixel
         """
         _assert_no_grad(target)
         _assert_no_grad(pixelweights)
@@ -281,30 +282,31 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
             totinputs += input_batch.shape[0]
         input_coord_t = torch.LongTensor(totinputs,3)
         input_feats_t = torch.FloatTensor(totinputs,1)
+        labels_t      = torch.LongTensor(totinputs,1)
+        weights_t     = torch.FloatTensor(totinputs,1)
         ninputs = 0
-        for batchid,input_batch in enumerate(data["pixlist"]):
+        for batchid,(input_batch,label_np,weight_np) in enumerate(zip(data["pixlist"],data["label"],data["weight"])):
             input_coord_t[ninputs:ninputs+input_batch.shape[0],0:2] = torch.Tensor(input_batch[:,0:2].astype(np.int64))
             input_coord_t[ninputs:ninputs+input_batch.shape[0],2]   = batchid
             input_feats_t[ninputs:ninputs+input_batch.shape[0],0]   = torch.Tensor(input_batch[:,2])
+            labels_t[ninputs:ninputs+input_batch.shape[0],0]        = torch.Tensor(label_np[:,2])
+            weights_t[ninputs:ninputs+input_batch.shape[0],0]       = torch.Tensor(weight_np[:,2])
+            ndiff = np.not_equal(label_np[:,0:2],weight_np[:,0:2]).sum()
+            if ndiff!=0:
+                raise ValueError("coordinates of label and weight pixels are different. ndiff=%d of %d"%(ndiff,label_np.shape[0]))
             ninputs += input_batch.shape[0]
-
-        # truths
-        labels_t = torch.LongTensor( batchsize,1,data["label"][0].shape[0],data["label"][0].shape[1] )
-        for ibatch in xrange(batchsize):
-            labels_t[ibatch,0,:] = torch.Tensor(data["label"][ibatch].astype(np.int64))
-
-        # weights
-        weights_t = torch.FloatTensor( batchsize,1,data["label"][0].shape[0],data["label"][0].shape[1] )
-        for ibatch in xrange(batchsize):
-            weights_t[ibatch,0,:] = torch.Tensor(data["weight"][ibatch])
 
         # batchsize
         batchsize_t = torch.LongTensor([batchsize])
         dtformat = time.time()-end
         format_time.update( dtformat )
         print "format/xfer data: ",dtformat
-        print input_coord_t[0:10,:]
-        print input_feats_t[0:10]
+        print "coords:", input_coord_t[0:10,:]
+        print "pixvals:",input_feats_t[0:10]
+        print "labels:",  labels_t[0:50]
+        print "origlabels: ",data["origlabel"][0][0:50,2]
+        print "weight:",  weights_t[0:10]
+
 
         input_coord_t = input_coord_t.to(device=device)
         input_feats_t = input_feats_t.to(device=device)
@@ -320,7 +322,7 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
             torch.cuda.synchronize()
         end = time.time()
         print "input: ",input_coord_t.shape
-        output = model(input_list)
+        output = model(input_coord_t,input_feats_t,batchsize_t)
         print "output: ",output.shape
         sys.exit(-1)
         

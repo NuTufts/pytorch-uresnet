@@ -4,26 +4,15 @@ import ROOT as rt
 from larcv import larcv
 from larcvdataset.larcvserver import LArCVServer
 
-def load_data(io):
-
-    threshold = 10.0
-    
-    data = {}
-    ev_wire = io.get_data(larcv.kProductImage2D,"wire")
-    nimgs = ev_wire.Image2DArray().size()
-    meta = ev_wire.Image2DArray().front().meta()
-    
-    for iimg in xrange(nimgs):
-        data["pixdata_p%d"%(iimg)] = larcv.as_pixelarray( ev_wire.Image2DArray().at(iimg), threshold )
-
-    return data
+# dataset
+sys.path.append( os.environ["PWD"]+"/../dataloader" )
+from sparseimgdata import SparseImagePyTorchDataset
     
 inputfile = "~/trainingdata/mcc8ssnet/train00.root"
 
 batchsize = 1
-nworkers  = 1
 print "start feeders"
-feeder = LArCVServer(batchsize,"test",load_data,inputfile,nworkers,server_verbosity=0,worker_verbosity=0)
+feeder = SparseImagePyTorchDataset(inputfile, batchsize, tickbackward=True)
 
 print "wait for workers to load up"
 time.sleep(1)
@@ -31,11 +20,29 @@ time.sleep(1)
 print "start receiving [enter to continue]"
 #raw_input()
 
-nentries = 50
+nentries = 1
 tstart = time.time()
 for n in xrange(nentries):
-    batch = feeder.get_batch_dict()
-    print "entry[",n,"] from ",batch["feeder"],": ",batch.keys(),"npts[p0]=",batch["pixdata_p0"][0].shape
+    batch = feeder[0]
+    print "entry[",n,"] keys=",batch.keys(),"shape[pixlist]=",batch["pixlist"][0].shape
+
+    # check visually
+    hadc = rt.TH2D("hadc_%d",";;ADC",512,0,512,512,0,512)
+    hseg = rt.TH2D("hseg_%d",";;segment",512,0,512,512,0,512)
+
+    pixlist = batch["pixlist"][0]
+    labellist = batch["label"][0]
+    for ipix in xrange(pixlist.shape[0]):
+        hadc.SetBinContent( int(pixlist[ipix,0])+1, int(pixlist[ipix,1])+1, float(pixlist[ipix,2]) )
+        hseg.SetBinContent( int(pixlist[ipix,0])+1, int(pixlist[ipix,1])+1, float(labellist[ipix,2]) )
+        
+    c = rt.TCanvas("c","c",1200,500)
+    c.Divide(2,1)
+    c.cd(1)
+    hadc.Draw("colz")
+    c.cd(2)
+    hseg.Draw("colz")
+    raw_input()
 tend = time.time()-tstart
 print "elapsed time, ",tend,"secs ",tend/float(nentries)," sec/batch"
 sys.exit(-1)
