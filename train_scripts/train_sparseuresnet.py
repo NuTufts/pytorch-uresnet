@@ -191,7 +191,8 @@ def main():
                 traceback.print_exc(e)
                 break
             print "Iter:%d Epoch:%d.%d train aveloss=%.3f aveacc=%.3f"%(ii,ii/iter_per_epoch,ii%iter_per_epoch,train_ave_loss,train_ave_acc)
-
+            sys.exit(-1)
+            
             # evaluate on validation set
             if ii%iter_per_valid==0:
                 try:
@@ -280,61 +281,23 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
         end = time.time()
         
         # input: need two tensors (1) coordinate which is Nx3 (2) features N
-        batchsize = len(data["pixlist"])
-        totinputs = 0
-        for input_batch in data["pixlist"]:
-            totinputs += input_batch.shape[0]
-        input_coord_t = torch.LongTensor(totinputs,3)
-        input_feats_t = torch.FloatTensor(totinputs,1)
-        labels_t      = torch.LongTensor(totinputs)
-        weights_t     = torch.FloatTensor(totinputs)
-        ninputs = 0
-        for batchid,(input_batch,label_np,weight_np) in enumerate(zip(data["pixlist"],data["label"],data["weight"])):
-            input_coord_t[ninputs:ninputs+input_batch.shape[0],0:2] = torch.Tensor(input_batch[:,0:2].astype(np.int64))
-            input_coord_t[ninputs:ninputs+input_batch.shape[0],2]   = batchid
-            input_feats_t[ninputs:ninputs+input_batch.shape[0],0]   = torch.Tensor(input_batch[:,2])
-            labels_t[ninputs:ninputs+input_batch.shape[0]]        = torch.Tensor(label_np[:,2])
-            weights_t[ninputs:ninputs+input_batch.shape[0]]       = torch.Tensor(weight_np[:,2])
-            ndiff = np.not_equal(label_np[:,0:2],weight_np[:,0:2]).sum()
-            if ndiff!=0:
-                raise ValueError("coordinates of label and weight pixels are different. ndiff=%d of %d"%(ndiff,label_np.shape[0]))
-            ninputs += input_batch.shape[0]
-
-        # batchsize
-        batchsize_t = torch.LongTensor([batchsize])
+        input_coord_t, input_feats_t, labels_t, weights_t, batchsize_t = convert_to_tensor( data, device )
         dtformat = time.time()-end
         format_time.update( dtformat )
-        #print "format/xfer data: ",dtformat
-        #print "coords:", input_coord_t[0:10,:]
-        #print "pixvals:",input_feats_t[0:10]
-        #print "labels:",  labels_t[0:10]
-        #print "origlabels: ",data["origlabel"][0][0:10,2]
-        #print "weight:",  weights_t[0:10]
-        print "labels:",  labels_t.shape
-
-        input_coord_t = input_coord_t.to(device=device)
-        input_feats_t = input_feats_t.to(device=device)
-        labels_t      = labels_t.to(device=device)
-        weights_t     = weights_t.to(device=device)
-        batchsize_t   = batchsize_t.to(device=device)
-        print input_coord_t.is_cuda,input_feats_t.is_cuda,labels_t.is_cuda,weights_t.is_cuda
-
-        input_list = [input_coord_t,input_feats_t,batchsize_t]
         
         # compute output
         if RUNPROFILER:
             torch.cuda.synchronize()
         end = time.time()
-        print "input: ",input_coord_t.shape
+        #print "input: ",input_coord_t.shape
         output_t = model(input_coord_t,input_feats_t,batchsize_t)
-        print "output: ",output_t.shape
+        #print "output: ",output_t.shape
         
         loss = criterion(output_t, labels_t, weights_t)
-        print "loss: ",loss
+
         if RUNPROFILER:
             torch.cuda.synchronize()                
         forward_time.update(time.time()-end)
-        sys.exit(-1)
 
         # compute gradient and do SGD step
         if RUNPROFILER:
@@ -347,14 +310,16 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
             torch.cuda.synchronize()                
         backward_time.update(time.time()-end)
 
+        #print "finished backward"
+
         # measure accuracy and record loss
         end = time.time()
-        prec1 = accuracy(output.data, labels_var.data, images_var.data)
+        prec1 = accuracy(output_t, labels_t)
         acc_time.update(time.time()-end)
 
         # updates
-        losses.update(loss.data[0], data.images.size(0))
-        top1.update(prec1[-1], data.images.size(0))
+        losses.update(loss.item(), batchsize_t.item())
+        top1.update(prec1[-1], batchsize_t.item())
         for i,acc in enumerate(prec1):
             acc_list[i].update( acc )
 
@@ -373,6 +338,7 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
                       losses.val,losses.avg,
                       top1.val,top1.avg)
             print "Iter: [%d][%d/%d]\tBatch %.3f (%.3f)\tData %.3f (%.3f)\tFormat %.3f (%.3f)\tForw %.3f (%.3f)\tBack %.3f (%.3f)\tAcc %.3f (%.3f)\t || \tLoss %.3f (%.3f)\tPrec@1 %.3f (%.3f)"%status
+        
 
     writer.add_scalar('data/train_loss', losses.avg, epoch )        
     writer.add_scalars('data/train_accuracy', {'background': acc_list[0].avg,
@@ -490,31 +456,31 @@ def adjust_learning_rate(optimizer, epoch, lr):
         param_group['lr'] = lr
 
 
-def accuracy(output, target, imgdata):
-    """Computes the accuracy. we want the aggregate accuracy along with accuracies for the different labels. easiest to just use numpy..."""
-    profile = False
-    # needs to be as gpu as possible!
-    maxk = 1
-    batch_size = target.size(0)
+def accuracy(predict_t, labels_t, profile=False):
+    """
+    Computes the accuracy.
+
+    inputs
+    ------
+    
+    predict_t:  (N,3) float tensor
+    labels_t:   (N,1) long tensor
+    """
+
+    # detach the tensor so we don't add to the compute graph
+    # note: this is not a copy -- do not make in-place modifications to it
+    predict      = predict_t.detach()
+    truth_label  = labels_t.detach()
+
     if profile:
         torch.cuda.synchronize()
         start = time.time()    
-    #_, pred = output.topk(maxk, 1, True, False) # on gpu. slow AF
-    _, pred = output.max( 1, keepdim=False) # on gpu
-    if profile:
-        torch.cuda.synchronize()
-        print "time for topk: ",time.time()-start," secs"
-
-    if profile:
-        start = time.time()
-    #print "pred ",pred.size()," iscuda=",pred.is_cuda
-    #print "target ",target.size(), "iscuda=",target.is_cuda
-    targetex = target.resize_( pred.size() ) # expanded view, should not include copy
-    correct = pred.eq( targetex ) # on gpu
-    #print "correct ",correct.size(), " iscuda=",correct.is_cuda    
-    if profile:
-        torch.cuda.synchronize()
-        print "time to calc correction matrix: ",time.time()-start," secs"
+    
+    profile = False
+    # needs to be as gpu as possible!
+    pred_label = torch.argmax( predict, dim=1 )
+    compare    = torch.eq( pred_label, truth_label )
+    totcorrect = compare.sum()
 
     # we want counts for elements wise
     num_per_class = {}
@@ -524,12 +490,17 @@ def accuracy(output, target, imgdata):
     if profile:
         torch.cuda.synchronize()            
         start = time.time()
-    for c in range(output.size(1)):
-        # loop over classes
-        classmat = targetex.eq(int(c)) # elements where class is labeled
+
+    nclasses = predict.size(1)
+    print "acce: nclasses=",nclasses,type(nclasses)
+    for c in xrange(nclasses):
+        # get entries with this truthlabel
+        classentries = torch.eq( truth_label, c ).to(torch.long)
+        pred_select  = torch.index_select( pred_label, 0, classentries )
+
         #print "classmat: ",classmat.size()," iscuda=",classmat.is_cuda
-        num_per_class[c] = classmat.sum()
-        corr_per_class[c] = (correct*classmat).sum() # mask by class matrix, then sum
+        num_per_class[c]  = classentries.sum().item()
+        corr_per_class[c] = torch.eq( pred_select, c ).sum().item()
         total_corr += corr_per_class[c]
         total_pix  += num_per_class[c]
     if profile:
@@ -538,7 +509,7 @@ def accuracy(output, target, imgdata):
         
     # make result vector
     res = []
-    for c in range(output.size(1)):
+    for c in xrange(nclasses):
         if num_per_class[c]>0:
             res.append( corr_per_class[c]/float(num_per_class[c])*100.0 )
         else:
@@ -557,6 +528,66 @@ def dump_lr_schedule( startlr, numepochs ):
             print "Epoch [%d] lr=%.3e"%(epoch,lr)
     print "Epoch [%d] lr=%.3e"%(epoch,lr)
     return
+
+def convert_to_tensor( data, device ):
+    """ 
+    we take the dictionary from the larcvserver dataloader and convert the various
+    numpy arrays into pytorch tensors
+
+    inputs
+    ------
+    data: dictionary with numpy arrays
+
+    output
+    ------
+    input_coord_t: (N,3) longtensor with (row,col,batch)
+    input_feats_t: (N,1) floattensor with pixel values
+    labels_t:      (N,1) longtensor with truth class
+    weights_t:     (N,1) float tensor with weights for each pixel
+    batchsize_t:   (1)   longtensor, batchsize
+    """
+
+    batchsize = len(data["pixlist"])
+    totinputs = 0
+    for input_batch in data["pixlist"]:
+        totinputs += input_batch.shape[0]
+    input_coord_t = torch.LongTensor(totinputs,3)
+    input_feats_t = torch.FloatTensor(totinputs,1)
+    labels_t      = torch.LongTensor(totinputs)
+    weights_t     = torch.FloatTensor(totinputs)
+    
+    ninputs = 0
+    for batchid,(input_batch,label_np,weight_np) in enumerate(zip(data["pixlist"],data["label"],data["weight"])):
+        input_coord_t[ninputs:ninputs+input_batch.shape[0],0:2] = torch.Tensor(input_batch[:,0:2].astype(np.int64))
+        input_coord_t[ninputs:ninputs+input_batch.shape[0],2]   = batchid
+        input_feats_t[ninputs:ninputs+input_batch.shape[0],0]   = torch.Tensor(input_batch[:,2])
+        labels_t[ninputs:ninputs+input_batch.shape[0]]        = torch.Tensor(label_np[:,2])
+        weights_t[ninputs:ninputs+input_batch.shape[0]]       = torch.Tensor(weight_np[:,2])
+        ndiff = np.not_equal(label_np[:,0:2],weight_np[:,0:2]).sum()
+        if ndiff!=0:
+            raise ValueError("coordinates of label and weight pixels are different. ndiff=%d of %d"%(ndiff,label_np.shape[0]))
+        ninputs += input_batch.shape[0]
+
+    # batchsize
+    batchsize_t = torch.LongTensor([batchsize])
+
+    #print "format/xfer data: ",dtformat
+    #print "coords:", input_coord_t[0:10,:]
+    #print "pixvals:",input_feats_t[0:10]
+    #print "labels:",  labels_t[0:10]
+    #print "origlabels: ",data["origlabel"][0][0:10,2]
+    #print "weight:",  weights_t[0:10]
+    #print "labels:",  labels_t.shape
+
+    input_coord_t = input_coord_t.to(device=device)
+    input_feats_t = input_feats_t.to(device=device)
+    labels_t      = labels_t.to(device=device)
+    weights_t     = weights_t.to(device=device)
+    batchsize_t   = batchsize_t.to(device=device)
+    #print input_coord_t.is_cuda,input_feats_t.is_cuda,labels_t.is_cuda,weights_t.is_cuda
+
+    return input_coord_t, input_feats_t, labels_t, weights_t, batchsize_t
+    
 
 if __name__ == '__main__':
     #dump_lr_schedule(1.0e-2, 4000)
