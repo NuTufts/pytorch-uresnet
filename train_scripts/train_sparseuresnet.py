@@ -114,8 +114,8 @@ def main():
     weight_decay = 1.0e-3
 
     # training length
-    batchsize_train = 10
-    batchsize_valid = 2
+    batchsize_train = 20
+    batchsize_valid = 10
     start_epoch = 0
     epochs      = 1
     start_iter  = 0
@@ -191,7 +191,6 @@ def main():
                 traceback.print_exc(e)
                 break
             print "Iter:%d Epoch:%d.%d train aveloss=%.3f aveacc=%.3f"%(ii,ii/iter_per_epoch,ii%iter_per_epoch,train_ave_loss,train_ave_acc)
-            sys.exit(-1)
             
             # evaluate on validation set
             if ii%iter_per_valid==0:
@@ -279,7 +278,6 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
 
         # convert to pytorch Variable (with automatic gradient calc.)
         end = time.time()
-        
         # input: need two tensors (1) coordinate which is Nx3 (2) features N
         input_coord_t, input_feats_t, labels_t, weights_t, batchsize_t = convert_to_tensor( data, device )
         dtformat = time.time()-end
@@ -365,35 +363,34 @@ def validate(val_loader, batchsize, model, criterion, nbatches, print_freq, iite
     # switch to evaluate mode
     model.eval()
 
-    end = time.time()
+    tallbatches = time.time()
     for i in range(0,nbatches):
-        data = val_loader.getbatch(batchsize)
+        tbatch = time.time()
 
-        # convert to pytorch Variable (with automatic gradient calc.)
-        if GPUMODE:
-            images_var = torch.autograd.Variable(data.images.cuda(GPUID))
-            labels_var = torch.autograd.Variable(data.labels.cuda(GPUID),requires_grad=False)
-            weight_var = torch.autograd.Variable(data.weight.cuda(GPUID),requires_grad=False)
-        else:
-            images_var = torch.autograd.Variable(data.images)
-            labels_var = torch.autograd.Variable(data.labels,requires_grad=False)
-            weight_var = torch.autograd.Variable(data.weight,requires_grad=False)
+        tdataload = time.time()
+        data = val_loader[0]
+        tdataload = time.time()-tdataload
 
+        tformat = time.time()
+        input_coord_t, input_feats_t, labels_t, weights_t, batchsize_t = convert_to_tensor( data, device )
+        tformat = tformat - time.time()
+        
         # compute output
-        output = model(images_var)
-        loss = criterion(output, labels_var, weight_var)
-        #loss = criterion(output, labels_var)
+        output_t = model(input_coord_t,input_feats_t, batchsize_t)
+
+        # loss
+        loss = criterion(output_t, labels_t, weights_t)
 
         # measure accuracy and record loss
-        prec1 = accuracy(output.data, labels_var.data, images_var.data)
-        losses.update(loss.data[0], data.images.size(0))
-        top1.update(prec1[-1], data.images.size(0))
+        prec1 = accuracy(output_t,labels_t)
+        
+        losses.update(loss.item(), batchsize_t.item())
+        top1.update(prec1[-1], batchsize_t.item())
         for i,acc in enumerate(prec1):
             acc_list[i].update( acc )
                 
         # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
+        batch_time.update(tbatch - time.time())
 
         if i % print_freq == 0:
             status = (i,nbatches,batch_time.val,batch_time.avg,losses.val,losses.avg,top1.val,top1.avg)
