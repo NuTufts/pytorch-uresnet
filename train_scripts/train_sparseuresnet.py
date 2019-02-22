@@ -69,7 +69,6 @@ class PixelWiseLoss(nn.modules.loss._WeightedLoss):
         """
         
         pixelloss = self.cross_entropy( predict_t, target_t )
-        print "pixelloss shape=",pixelloss.shape
         
         pixelloss *= pixelweights_t
         weightsum  = pixelweights_t.sum()
@@ -99,9 +98,6 @@ def main():
     #for p in model.parameters():
     #    print p.is_cuda
     
-
-    print next(model.parameters()).is_cuda
-
     # define loss function (criterion) and optimizer
     if GPUMODE:
         criterion = PixelWiseLoss().to(device=device)

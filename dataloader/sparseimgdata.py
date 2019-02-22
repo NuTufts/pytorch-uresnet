@@ -68,7 +68,7 @@ def load_ssnet_larcvdata( name, inputfile, batchsize, nworkers, tickbackward=Fal
 
 class SparseImagePyTorchDataset(torchdata.Dataset):
     idCounter = 0
-    def __init__(self,inputfile,batchsize,tickbackward=False):
+    def __init__(self,inputfile,batchsize,tickbackward=False,nworkers=4):
         super(SparseImagePyTorchDataset,self).__init__()
 
         # get length by querying the tree
@@ -79,7 +79,7 @@ class SparseImagePyTorchDataset(torchdata.Dataset):
         
         self.feedername = "SparseImagePyTorchDataset_%d"%(SparseImagePyTorchDataset.idCounter)
         self.batchsize = batchsize
-        self.nworkers  = 4
+        self.nworkers  = nworkers
         self.inputfile = inputfile
         self.feeder = LArCVServer(self.batchsize,self.feedername,
                                   load_sparse_ssnetdata,self.inputfile,self.nworkers,
