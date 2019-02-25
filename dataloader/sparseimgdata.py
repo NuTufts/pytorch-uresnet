@@ -47,9 +47,13 @@ def load_sparse_ssnetdata(io):
     # copy coords
     data["label"][:,0:2] = origlabels[:,0:2]
     # set the labels
+
+    # BG: LABEL 0 (default)
+    # SHOWER: LABEL = 2
     data["label"][:,2][ origlabels[:,2]==3 ] = 2
     data["label"][:,2][ origlabels[:,2]==4 ] = 2
-    data["label"][:,2][ origlabels[:,2]==5 ] = 2    
+    data["label"][:,2][ origlabels[:,2]==5 ] = 2
+    # TRACK: LABEL = 1
     data["label"][:,2][ origlabels[:,2]>=6 ] = 1
     data["origlabel"] = origlabels
     
@@ -88,16 +92,16 @@ class SparseImagePyTorchDataset(torchdata.Dataset):
         SparseImagePyTorchDataset.idCounter += 1
 
     def __len__(self):
-        print "return length of sample:",self.nentries
+        #print "return length of sample:",self.nentries
         return self.nentries
 
     def __getitem__(self,index):
         """ we do not have a way to get the index (can change that)"""
-        print "called get item for index=",index," ",self.feeder.identity,"pid=",os.getpid()
+        #print "called get item for index=",index," ",self.feeder.identity,"pid=",os.getpid()
         data = self.feeder.get_batch_dict()        
         # remove the feeder variable
         del data["feeder"]
-        print "called get item: ",data.keys()
+        #print "called get item: ",data.keys()
         return data
         
         

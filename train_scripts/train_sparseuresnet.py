@@ -105,7 +105,7 @@ def main():
         criterion = PixelWiseLoss()
 
     # training parameters
-    lr = 2.0e-5
+    lr = 2.0e-3
     momentum = 0.9
     weight_decay = 1.0e-3
 
@@ -256,7 +256,7 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
     top1 = AverageMeter()
 
     acc_list = []
-    for i in range(5):
+    for i in range(5): #nclasses (3) + 2
         acc_list.append( AverageMeter() )
 
     # switch to train mode
@@ -308,13 +308,12 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
 
         # measure accuracy and record loss
         end = time.time()
-        prec1 = accuracy(output_t, labels_t)
+        acc_v = accuracy(output_t, labels_t, batchsize_t)
         acc_time.update(time.time()-end)
 
         # updates
         losses.update(loss.item(), batchsize_t.item())
-        top1.update(prec1[-1], batchsize_t.item())
-        for i,acc in enumerate(prec1):
+        for i,acc in enumerate(acc_v):
             acc_list[i].update( acc )
 
         # measure elapsed time for batch
@@ -330,8 +329,8 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
                       backward_time.val,backward_time.avg,
                       acc_time.val,acc_time.avg,                      
                       losses.val,losses.avg,
-                      top1.val,top1.avg)
-            print "Iter: [%d][%d/%d]\tBatch %.3f (%.3f)\tData %.3f (%.3f)\tFormat %.3f (%.3f)\tForw %.3f (%.3f)\tBack %.3f (%.3f)\tAcc %.3f (%.3f)\t || \tLoss %.3f (%.3f)\tPrec@1 %.3f (%.3f)"%status
+                      acc_list[3].val,acc_list[3].avg)
+            print "Iter: [%d][%d/%d] secs \tBatch %.3f (%.3f)\tData %.3f (%.3f)\tFormat %.3f (%.3f)\tForw %.3f (%.3f)\tBack %.3f (%.3f)\tAcc %.3f (%.3f)\t || \tLoss %.3f (%.3f)\tAcc %.3f (%.3f)"%status
         
 
     writer.add_scalar('data/train_loss', losses.avg, epoch )        
@@ -378,7 +377,7 @@ def validate(val_loader, batchsize, model, criterion, nbatches, print_freq, iite
         loss = criterion(output_t, labels_t, weights_t)
 
         # measure accuracy and record loss
-        prec1 = accuracy(output_t,labels_t)
+        prec1 = accuracy(output_t, labels_t, batchsize_t)
         
         losses.update(loss.item(), batchsize_t.item())
         top1.update(prec1[-1], batchsize_t.item())
@@ -449,7 +448,7 @@ def adjust_learning_rate(optimizer, epoch, lr):
         param_group['lr'] = lr
 
 
-def accuracy(predict_t, labels_t, profile=False):
+def accuracy(predict_t, labels_t, batchsize_t, profile=False):
     """
     Computes the accuracy.
 
@@ -458,12 +457,14 @@ def accuracy(predict_t, labels_t, profile=False):
     
     predict_t:  (N,3) float tensor
     labels_t:   (N,1) long tensor
+    batchsize_t: (1,) long tensor
     """
 
     # detach the tensor so we don't add to the compute graph
     # note: this is not a copy -- do not make in-place modifications to it
     predict      = predict_t.detach()
     truth_label  = labels_t.detach()
+    batchsize    = batchsize_t.item()
 
     if profile:
         torch.cuda.synchronize()
@@ -485,15 +486,15 @@ def accuracy(predict_t, labels_t, profile=False):
         start = time.time()
 
     nclasses = predict.size(1)
-    print "acce: nclasses=",nclasses,type(nclasses)
     for c in xrange(nclasses):
-        # get entries with this truthlabel
-        classentries = torch.eq( truth_label, c ).to(torch.long)
-        pred_select  = torch.index_select( pred_label, 0, classentries )
-
-        #print "classmat: ",classmat.size()," iscuda=",classmat.is_cuda
+        # get entries with this truthlabel: 1's and 0's
+        classentries = torch.eq( truth_label, c )
+        
         num_per_class[c]  = classentries.sum().item()
-        corr_per_class[c] = torch.eq( pred_select, c ).sum().item()
+
+        correct = torch.eq( pred_label, c )*classentries
+        corr_per_class[c] = correct.sum().item()
+
         total_corr += corr_per_class[c]
         total_pix  += num_per_class[c]
     if profile:
@@ -501,7 +502,13 @@ def accuracy(predict_t, labels_t, profile=False):
         print "time to reduce: ",time.time()-start," secs"
         
     # make result vector
+    # first 'nclasses' entries are accuracy for each class
+    # then we add totals
+    #   res[nclasses] = total correct
+    #   res[nclasses+1] = track-shower combined accuracy (i.e. non-background)
     res = []
+    
+    # class results
     for c in xrange(nclasses):
         if num_per_class[c]>0:
             res.append( corr_per_class[c]/float(num_per_class[c])*100.0 )
