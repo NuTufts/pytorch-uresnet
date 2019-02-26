@@ -41,7 +41,7 @@ for n in xrange(nentries):
     weight    = batch["weight"][0]
     for ipix in xrange(pixlist.shape[0]):
         hadc.SetBinContent( int(pixlist[ipix,0])+1, int(pixlist[ipix,1])+1, float(pixlist[ipix,2]) )
-        hseg.SetBinContent( int(pixlist[ipix,0])+1, int(pixlist[ipix,1])+1, float(labellist[ipix,2]) )
+        hseg.SetBinContent( int(pixlist[ipix,0])+1, int(pixlist[ipix,1])+1, float(labellist[ipix,2]+1)*10.0 )
         hwgt.SetBinContent( int(weight[ipix,0])+1,  int(weight[ipix,1])+1,  float(weight[ipix,2]) )        
         
     c.cd(1)

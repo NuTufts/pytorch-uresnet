@@ -6,7 +6,7 @@ from larcv import larcv
 from larcvdataset.larcvserver import LArCVServer
 from torch.utils import data as torchdata
 
-def load_sparse_ssnetdata(io):
+def load_sparse_ssnetdata(io,remove_bg_labels=True):
     """
     we need the input data to be a pixel list
     however, the ground truth can be dense arrays
@@ -27,6 +27,8 @@ def load_sparse_ssnetdata(io):
     nimgs = ev_wire.Image2DArray().size()
     meta = ev_wire.Image2DArray().front().meta()
 
+
+    # cut on ADC values
     data["pixlist"] = larcv.as_pixelarray( ev_wire.Image2DArray().at(plane), threshold )
     data["weight"]  = larcv.as_pixelarray_with_selection( ev_weight.Image2DArray().at(plane),
                                                           ev_wire.Image2DArray().at(plane),
@@ -56,11 +58,16 @@ def load_sparse_ssnetdata(io):
     # TRACK: LABEL = 1
     data["label"][:,2][ origlabels[:,2]>=6 ] = 1
     data["origlabel"] = origlabels
-    
-    #data["weight"]  = larcv.as_ndarray( ev_weight.Image2DArray().at(plane) ).transpose( (1,0) )
-    
-    #data["label"]   = larcv.as_ndarray( ev_label.Image2DArray().at(plane)  ).transpose( (1,0) )
-    #data["weight"]  = larcv.as_ndarray( ev_weight.Image2DArray().at(plane) ).transpose( (1,0) )
+
+    # remove background labels
+    if remove_bg_labels:
+        nobg = data["label"][:,2]>0
+        #print "pre-bg removal: ",nobg.shape,nobg.sum()
+        data["label"]     = np.compress( nobg, data["label"],     axis=0 )
+        data["pixlist"]   = np.compress( nobg, data["pixlist"],   axis=0 )
+        data["weight"]    = np.compress( nobg, data["weight"],    axis=0 )
+        data["origlabel"] = np.compress( nobg, data["origlabel"], axis=0 )
+        #print "post-bg removal: ",data["label"].shape
 
     return data
                                           
