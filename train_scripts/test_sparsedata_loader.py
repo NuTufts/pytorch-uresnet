@@ -10,7 +10,12 @@ rt.gStyle.SetOptStat(0)
 sys.path.append( os.environ["PWD"]+"/../dataloader" )
 from sparseimgdata import SparseImagePyTorchDataset
     
-inputfile = "~/trainingdata/mcc8ssnet/train00.root"
+#inputfile = "~/trainingdata/mcc8ssnet/train00.root"
+#inputfile = ["/media/hdd1/larbys/ssnet_dllee_trainingdata/train00.root",
+#             "/media/hdd1/larbys/ssnet_dllee_trainingdata/train01.root",
+#             "/media/hdd1/larbys/ssnet_dllee_trainingdata/train02.root",
+#             "/media/hdd1/larbys/ssnet_dllee_trainingdata/train03.root"]
+inputfile = ["/media/hdd1/larbys/ssnet_dllee_trainingdata/train01.root"]
 
 batchsize = 1
 print "start feeders"
@@ -48,6 +53,8 @@ for n in xrange(nentries):
     hadc.Draw("colz")
     c.cd(2)
     hseg.Draw("colz")
+    hseg.SetMaximum(20)
+    hseg.SetMinimum(0)    
     c.cd(3)
     hwgt.Draw("colz")
     c.Update()

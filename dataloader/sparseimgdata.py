@@ -35,10 +35,11 @@ def load_sparse_ssnetdata(io,remove_bg_labels=True):
                                                           threshold, True,
                                                           larcv.msg.kNORMAL  )
 
-    # for the labels, we have to convert Particle ID from LArCV into track/shower/background
-    # showers are larcv larcv::ROIType_t: kEminus(3), kGamma(4), kPizero(5)
-    # tracks are larcv::ROITtype_t: muminus(6),kminus(7),piminus(8),proton(9)
-    # background are larcv::ROIType_t: unknown(0),cosmic(1),bnb(2)
+    # for the labels, we have to convert Particle ID from LArCV into track/shower
+    # by default, we remove the background label
+    # showers are larcv larcv::ROIType_t: kEminus(3), kGamma(4), kPizero(5)   || set to class 1
+    # tracks are larcv::ROITtype_t: muminus(6),kminus(7),piminus(8),proton(9) || set to class 0
+    # background are larcv::ROIType_t: unknown(0),cosmic(1),bnb(2)            || set to class 2
     # Definition is in larcv/core/DataFormat/DataFormatTypes.h
     # shower
     origlabels = larcv.as_pixelarray_with_selection( ev_label.Image2DArray().at(plane),
@@ -51,23 +52,27 @@ def load_sparse_ssnetdata(io,remove_bg_labels=True):
     # set the labels
 
     # BG: LABEL 0 (default)
-    # SHOWER: LABEL = 2
-    data["label"][:,2][ origlabels[:,2]==3 ] = 2
-    data["label"][:,2][ origlabels[:,2]==4 ] = 2
-    data["label"][:,2][ origlabels[:,2]==5 ] = 2
-    # TRACK: LABEL = 1
-    data["label"][:,2][ origlabels[:,2]>=6 ] = 1
+    # SHOWER: LABEL = 0+1 offset
+    data["label"][:,2][ origlabels[:,2]==3 ] = 1
+    data["label"][:,2][ origlabels[:,2]==4 ] = 1
+    data["label"][:,2][ origlabels[:,2]==5 ] = 1
+    # TRACK: LABEL = 1+1 offset
+    data["label"][:,2][ origlabels[:,2]>=6 ] = 2
     data["origlabel"] = origlabels
 
-    # remove background labels
+    # remove background labels, by choosing non-zero, then remove 1-offset
     if remove_bg_labels:
         nobg = data["label"][:,2]>0
         #print "pre-bg removal: ",nobg.shape,nobg.sum()
         data["label"]     = np.compress( nobg, data["label"],     axis=0 )
+        data["label"][:,2] += -1 # remove offset
         data["pixlist"]   = np.compress( nobg, data["pixlist"],   axis=0 )
         data["weight"]    = np.compress( nobg, data["weight"],    axis=0 )
         data["origlabel"] = np.compress( nobg, data["origlabel"], axis=0 )
         #print "post-bg removal: ",data["label"].shape
+    if data["label"].shape[0]==0:
+        print "no non-bg pixels in entry! resample."
+        return None # will cause a resample
 
     return data
                                           
@@ -82,18 +87,24 @@ class SparseImagePyTorchDataset(torchdata.Dataset):
     def __init__(self,inputfile,batchsize,tickbackward=False,nworkers=4):
         super(SparseImagePyTorchDataset,self).__init__()
 
+        if type(inputfile) is str:
+            self.inputfiles = [inputfile]
+        elif type(inputfile) is list:
+            self.inputfiles = inputfile
+        
         # get length by querying the tree
         self.nentries  = 0
-        rfile = rt.TFile(inputfile,"open")
-        self.nentries = rfile.Get("image2d_wire_tree").GetEntries()
-        rfile.Close()
+        tchain = rt.TChain("image2d_wire_tree")
+        for finput in self.inputfiles:
+            tchain.Add(finput)
+        self.nentries = tchain.GetEntries()
+        del tchain
         
         self.feedername = "SparseImagePyTorchDataset_%d"%(SparseImagePyTorchDataset.idCounter)
         self.batchsize = batchsize
         self.nworkers  = nworkers
-        self.inputfile = inputfile
         self.feeder = LArCVServer(self.batchsize,self.feedername,
-                                  load_sparse_ssnetdata,self.inputfile,self.nworkers,
+                                  load_sparse_ssnetdata,self.inputfiles,self.nworkers,
                                   server_verbosity=0,worker_verbosity=0,
                                   io_tickbackward=tickbackward)
         SparseImagePyTorchDataset.idCounter += 1

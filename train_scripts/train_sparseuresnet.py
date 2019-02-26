@@ -44,7 +44,11 @@ GPUID=0
 RESUME_FROM_CHECKPOINT=False
 RUNPROFILER=False
 CHECKPOINT_FILE="plane2_caffe/run1/checkpoint.20000th.tar"
-INPUTFILE="~/trainingdata/mcc8ssnet/train00.root"
+INPUTDIR ="/media/hdd1/larbys/ssnet_dllee_trainingdata"
+inputfiles_train = [INPUTDIR+"/train00.root"]
+#                    INPUTDIR+"/train02.root"]
+inputfiles_valid = [INPUTDIR+"/train01.root"]
+
 
 # taken from torch.nn.modules.loss
 def _assert_no_grad(variable):
@@ -88,7 +92,12 @@ def main():
     global writer
 
     # create model
-    model = SparseUResNet( (512,512), 2, 16, 5, 3 )
+    inputshape = (512,512)
+    reps = 2
+    nfeatures = 32
+    nplanes = 5
+    noutputclasses = 2 # shower[0], track[1]
+    model = SparseUResNet( inputshape, reps, nfeatures, nplanes, noutputclasses )
     if GPUMODE:
         model = model.to(device=device)
 
@@ -110,7 +119,7 @@ def main():
     weight_decay = 1.0e-3
 
     # training length
-    batchsize_train = 20
+    batchsize_train = 10
     batchsize_valid = 10
     start_epoch = 0
     epochs      = 1
@@ -121,13 +130,13 @@ def main():
     iter_per_valid = 10
     iter_per_checkpoint = 500
 
-    nbatches_per_itertrain = 5
+    nbatches_per_itertrain = 10
     itersize_train         = batchsize_train*nbatches_per_itertrain
     trainbatches_per_print = 1
     
-    nbatches_per_itervalid = 25
+    nbatches_per_itervalid = 4
     itersize_valid         = batchsize_valid*nbatches_per_itervalid
-    validbatches_per_print = 5
+    validbatches_per_print = 1
 
     optimizer = torch.optim.SGD(model.parameters(), lr,
                                 momentum=momentum,
@@ -136,8 +145,8 @@ def main():
     cudnn.benchmark = True
 
     # LOAD THE DATASET
-    iotrain = SparseImagePyTorchDataset(INPUTFILE, batchsize_train, tickbackward=True)
-    iovalid = SparseImagePyTorchDataset(INPUTFILE, batchsize_valid, tickbackward=True)
+    iotrain = SparseImagePyTorchDataset(inputfiles_train, batchsize_train, tickbackward=True, nworkers=4)
+    iovalid = SparseImagePyTorchDataset(inputfiles_valid, batchsize_valid, tickbackward=True, nworkers=2)
 
     NENTRIES = len(iotrain)
     
@@ -179,7 +188,8 @@ def main():
             try:
                 train_ave_loss, train_ave_acc = train(iotrain, batchsize_train, model,
                                                       criterion, optimizer,
-                                                      nbatches_per_itertrain, ii, trainbatches_per_print)
+                                                      nbatches_per_itertrain, ii, trainbatches_per_print,
+                                                      noutputclasses)
             except Exception,e:
                 print "Error in training routine!"            
                 print e.message
@@ -191,7 +201,9 @@ def main():
             # evaluate on validation set
             if ii%iter_per_valid==0:
                 try:
-                    prec1 = validate(iovalid, batchsize_valid, model, criterion, nbatches_per_itervalid, validbatches_per_print, ii)
+                    prec1 = validate(iovalid, batchsize_valid, model, criterion,
+                                     nbatches_per_itervalid, validbatches_per_print,
+                                     ii, noutputclasses)
                 except Exception,e:
                     print "Error in validation routine!"            
                     print e.message
@@ -242,7 +254,7 @@ def main():
     writer.close()
 
 
-def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch, print_freq):
+def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch, print_freq, noutputclasses):
 
     global writer
     
@@ -256,7 +268,7 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
     top1 = AverageMeter()
 
     acc_list = []
-    for i in range(5): #nclasses (3) + 2
+    for i in range(noutputclasses+2):
         acc_list.append( AverageMeter() )
 
     # switch to train mode
@@ -334,16 +346,15 @@ def train(train_loader, batchsize, model, criterion, optimizer, nbatches, epoch,
         
 
     writer.add_scalar('data/train_loss', losses.avg, epoch )        
-    writer.add_scalars('data/train_accuracy', {'background': acc_list[0].avg,
-                                               'track':  acc_list[1].avg,
-                                               'shower': acc_list[2].avg,
-                                               'total':  acc_list[3].avg,
-                                               'nonzero':acc_list[4].avg}, epoch )        
+    writer.add_scalars('data/train_accuracy', {'track':  acc_list[1].avg,
+                                               'shower': acc_list[0].avg,
+                                               'total':  acc_list[2].avg,
+                                               'nonzero':acc_list[3].avg}, epoch )        
     
     return losses.avg,top1.avg
 
 
-def validate(val_loader, batchsize, model, criterion, nbatches, print_freq, iiter):
+def validate(val_loader, batchsize, model, criterion, nbatches, print_freq, iiter, noutputclasses):
 
     global writer
     
@@ -352,7 +363,7 @@ def validate(val_loader, batchsize, model, criterion, nbatches, print_freq, iite
     top1 = AverageMeter()
 
     acc_list = []
-    for i in range(5):
+    for i in range(noutputclasses+2):
         acc_list.append( AverageMeter() )
     
     # switch to evaluate mode
@@ -377,18 +388,17 @@ def validate(val_loader, batchsize, model, criterion, nbatches, print_freq, iite
         loss = criterion(output_t, labels_t, weights_t)
 
         # measure accuracy and record loss
-        prec1 = accuracy(output_t, labels_t, batchsize_t)
+        acc_v = accuracy(output_t, labels_t, batchsize_t)
         
         losses.update(loss.item(), batchsize_t.item())
-        top1.update(prec1[-1], batchsize_t.item())
-        for i,acc in enumerate(prec1):
+        for i,acc in enumerate(acc_v):
             acc_list[i].update( acc )
                 
         # measure elapsed time
         batch_time.update(tbatch - time.time())
 
         if i % print_freq == 0:
-            status = (i,nbatches,batch_time.val,batch_time.avg,losses.val,losses.avg,top1.val,top1.avg)
+            status = (i,nbatches,batch_time.val,batch_time.avg,losses.val,losses.avg,acc_list[2].val,acc_list[2].avg)
             print "Valid: [%d/%d]\tTime %.3f (%.3f)\tLoss %.3f (%.3f)\tPrec@1 %.3f (%.3f)"%status
             #print('Test: [{0}/{1}]\t'
             #      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
@@ -401,13 +411,12 @@ def validate(val_loader, batchsize, model, criterion, nbatches, print_freq, iite
     #      .format(top1=top1))
 
     writer.add_scalar( 'data/valid_loss', losses.avg, iiter )
-    writer.add_scalars('data/valid_accuracy', {'background': acc_list[0].avg,
-                                               'track':   acc_list[1].avg,
-                                               'shower':  acc_list[2].avg,
-                                               'total':   acc_list[3].avg,
-                                               'nonzero': acc_list[4].avg}, iiter )
+    writer.add_scalars('data/valid_accuracy', {'track':   acc_list[1].avg,
+                                               'shower':  acc_list[0].avg,
+                                               'total':   acc_list[2].avg,
+                                               'nonzero': acc_list[3].avg}, iiter )
 
-    print "Test:Result* Prec@1 %.3f\tLoss %.3f"%(top1.avg,losses.avg)
+    print "Test:Result* Acc[total] %.3f\tLoss %.3f"%(acc_list[2].avg,losses.avg)
 
     return float(top1.avg)
 
@@ -516,8 +525,8 @@ def accuracy(predict_t, labels_t, batchsize_t, profile=False):
             res.append( 0.0 )
 
     # totals
-    res.append( 100.0*float(total_corr)/total_pix )
-    res.append( 100.0*float(corr_per_class[1]+corr_per_class[2])/(num_per_class[1]+num_per_class[2]) ) # track/shower acc
+    res.append( 100.0*float(total_corr)/total_pix ) # all classes
+    res.append( 100.0*float(corr_per_class[0]+corr_per_class[1])/(num_per_class[0]+num_per_class[1]) ) # track/shower acc
         
     return res
 
@@ -585,6 +594,11 @@ def convert_to_tensor( data, device ):
     weights_t     = weights_t.to(device=device)
     batchsize_t   = batchsize_t.to(device=device)
     #print input_coord_t.is_cuda,input_feats_t.is_cuda,labels_t.is_cuda,weights_t.is_cuda
+    if False:
+        print "input_coord_t: ",input_coord_t.shape
+        print "input_feats_t: ",input_feats_t.shape
+        print "labels_t: ",labels_t.shape
+        print "weights_t: ",weights_t.shape                
 
     return input_coord_t, input_feats_t, labels_t, weights_t, batchsize_t
     
