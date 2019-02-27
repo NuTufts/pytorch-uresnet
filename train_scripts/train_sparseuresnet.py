@@ -41,13 +41,14 @@ from sparseimgdata import SparseImagePyTorchDataset
 
 GPUMODE=True
 GPUID=0
-RESUME_FROM_CHECKPOINT=False
+RESUME_FROM_CHECKPOINT=True
 RUNPROFILER=False
-CHECKPOINT_FILE="plane2_caffe/run1/checkpoint.20000th.tar"
+CHECKPOINT_FILE="ckpt_run1/checkpoint.2000th.tar"
 INPUTDIR ="/media/hdd1/larbys/ssnet_dllee_trainingdata"
-inputfiles_train = [INPUTDIR+"/train00.root"]
-#                    INPUTDIR+"/train02.root"]
-inputfiles_valid = [INPUTDIR+"/train01.root"]
+inputfiles_train = [INPUTDIR+"/train02.root"]
+#                    INPUTDIR+"/train01.root",
+#                    INPUTDIR+"/train03.root"]
+inputfiles_valid = [INPUTDIR+"/val.root"]
 
 
 # taken from torch.nn.modules.loss
@@ -123,7 +124,7 @@ def main():
     batchsize_valid = 10
     start_epoch = 0
     epochs      = 1
-    start_iter  = 0
+    start_iter  = 2000
     num_iters   = 10000
     #num_iters    = None # if None
     iter_per_epoch = None # determined later
