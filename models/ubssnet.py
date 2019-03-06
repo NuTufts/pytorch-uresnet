@@ -295,7 +295,7 @@ class ubSSNet(nn.Module):
 
 if __name__ == "__main__":
 
-    weightfile = "../weights/saved_caffe_weights.tar"
+    weightfile = "../weights/saved_caffe_weights_plane2.tar"
     device = torch.device("cuda:0")
     #device = torch.device("cpu")    
     model = ubSSNet(weightfile).to(device).eval()
