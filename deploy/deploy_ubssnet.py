@@ -44,7 +44,7 @@ outio.initialize()
 
 # PYTORCH MODEL
 # -------------------------------------------------------------
-model = ubSSNet("../weights/saved_caffe_weights_plane2.tar").eval().to(device)
+model = ubSSNet("../weights/mcc8_caffe_ubssnet_plane2.tar").eval().to(device)
 
 # READ ENTRY DATA
 # --------------------------------------------------------------
